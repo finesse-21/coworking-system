@@ -1,21 +1,23 @@
-# models/scheduler.py
+from datetime import datetime
+from typing import List
 from models.buffer import Buffer
+from models.request import Request
 from models.workplace import Workplace
 
 class Scheduler:
-    def __init__(self, buffer_size, num_workplaces):
-        self.buffer = Buffer(buffer_size)
-        self.workplaces = [Workplace(i + 1) for i in range(num_workplaces)]
-        self.next_workplace_index = 0
+    def __init__(self, buffer: Buffer, workplaces: List[Workplace]):
+        self.buffer = buffer
+        self.workplaces = workplaces
 
-    def add_request_to_buffer(self, request):
+    def add_request_to_buffer(self, request: Request):
         return self.buffer.add_request(request)
 
-    def assign_workplace(self, request):
-        for _ in range(len(self.workplaces)):
-            workplace = self.workplaces[self.next_workplace_index]
-            self.next_workplace_index = (self.next_workplace_index + 1) % len(self.workplaces)
+    def get_next_request(self) -> Request:
+        return self.buffer.remove_request()
+
+    def assign_workplace(self, request: Request, current_time: datetime):
+        for workplace in self.workplaces:
             if not workplace.is_busy:
-                workplace.start_service(request)
-                return workplace.id
-        return None
+                workplace.start_service(request, current_time)
+                return True
+        return False

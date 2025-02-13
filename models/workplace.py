@@ -1,23 +1,28 @@
 from datetime import datetime, timedelta
+from models.request import Request
 
 class Workplace:
-    def __init__(self, id):
+    def __init__(self, id: int):
         self.id = id
         self.is_busy = False
         self.current_request = None
-        self.service_end_time = None
+        self.total_busy_time = timedelta()
+        self.last_busy_start_time = None
 
-    def start_service(self, request):
-        self.current_request = request
+    def start_service(self, request: Request, current_time: datetime):
         self.is_busy = True
-        self.service_end_time = datetime.now() + timedelta(seconds=request.service_time)
-        request.set_start_time(datetime.now())
+        self.current_request = request
+        request.set_start_time(current_time)
+        request.status = "в обработке"
+        self.last_busy_start_time = current_time
 
-    def end_service(self):
-        if self.is_busy and datetime.now() >= self.service_end_time:
+    def end_service(self, current_time: datetime):
+        if self.current_request:
+            request = self.current_request
+            request.set_end_time(current_time)
+            request.status = "завершен"
             self.is_busy = False
-            self.current_request.set_end_time(datetime.now())
-            completed_request = self.current_request
+            self.total_busy_time += current_time - self.last_busy_start_time
+            request.client.add_system_time(request.end_time - request.arrival_time)
             self.current_request = None
-            return completed_request
-        return None
+            self.last_busy_start_time = None

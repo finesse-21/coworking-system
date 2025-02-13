@@ -1,165 +1,228 @@
+import random
+from datetime import datetime, timedelta
+from typing import List
+import matplotlib.pyplot as plt
+from models.buffer import Buffer
 from models.client import Client
 from models.scheduler import Scheduler
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-import time
-import random
+from models.workplace import Workplace
 
-event_calendar = []
-last_event_index = 0
-request_workplace_map = {}
+def format_time(time: datetime) -> str:
+    """Форматирует время в формат ЧЧ:ММ:СС.ммм."""
+    return time.strftime("%H:%M:%S.%f")[:-3]
 
-# Основной цикл симуляции
-def run_simulation_step(scheduler, client, completed_requests, rejected_requests, current_time):
-    created_requests = 0
-    requests = client.generate_requests(current_time)
-    client.requests.extend(requests)
-    for request in requests:
-        event_calendar.append(f"Заявка {request.id} сгенерирована в {current_time}")
-        workplace_id = scheduler.assign_workplace(request)
-        if workplace_id is not None:
-            event_calendar.append(f"Заявка {request.id} назначена на рабочее место {workplace_id}")
-            request_workplace_map[request.id] = workplace_id  # Map request to workplace
-        else:
-            rejected_request = scheduler.add_request_to_buffer(request)
-            if rejected_request:
-                rejected_requests.append(rejected_request)  # Add rejected request to the list
-                event_calendar.append(f"Заявка {rejected_request.id} отклонена из-за переполнения буфера в {current_time}")
-            event_calendar.append(f"Заявка {request.id} добавлена в буфер")
-        created_requests += 1
 
-    for workplace in scheduler.workplaces:
-        completed_request = workplace.end_service()
-        if completed_request:
-            completed_requests.append(completed_request)
-            event_calendar.append(f"Заявка {completed_request.id} завершена в {current_time}")
+def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_steps: int, num_clients: int):
+    buffer = Buffer(buffer_size)
+    workplaces = [Workplace(id=i) for i in range(1, num_workplaces + 1)]
+    scheduler = Scheduler(buffer, workplaces)
+    clients = [Client(id=i) for i in range(1, num_clients + 1)]
 
-    # Назначение заявок на рабочие места
-    for workplace in scheduler.workplaces:
-        if not workplace.is_busy and not scheduler.buffer.is_empty():
-            request = scheduler.buffer.remove_request()
-            workplace.start_service(request)
-            event_calendar.append(f"Заявка {request.id} назначена на рабочее место {workplace.id}")
-            request_workplace_map[request.id] = workplace.id  # Map request to workplace
+    request_counter = 1
+    current_time = datetime.now()
 
-    return created_requests
+    for step in range(simulation_steps):
+        print(f"\nШаг {step + 1}")
+        input("Нажмите Enter для выполнения следующего шага...")
 
-# Формализованная схема модели — текущий статус
-def get_model_state(scheduler, completed_requests, step, created_requests):
-    global last_event_index
-    state_info = []
-    state_info.append(f"Шаг {step}")
-    state_info.append(f"[Клиент] -> Заявок создано: {created_requests}")
-    state_info.append(f"[Буфер] -> Заявок в буфере: {scheduler.buffer.get_size()} "
-                      f"{'(пуст)' if scheduler.buffer.is_empty() else '(полон)' if scheduler.buffer.is_full() else ''}")
-    state_info.append("Содержимое буфера:")
-    for request in scheduler.buffer.requests:
-        state_info.append(f"  Заявка ID {request.id}")
-    state_info.append("[Рабочие места]")
-    for workplace in scheduler.workplaces:
-        status = "свободен" if not workplace.is_busy else f"занят (Заявка ID {workplace.current_request.id})"
-        state_info.append(f"  Рабочее место {workplace.id}: {status}")
-    state_info.append("\n")
-    state_info.append("Календарь событий:")
-    for event in event_calendar[last_event_index:]:
-        state_info.append(event)
-    last_event_index = len(event_calendar)
-    state_info.append("\n")
-    return "\n".join(state_info)
+        for client in clients:
+            if random.random() < 0.9:
+                request = client.generate_request(request_counter)
+                request_counter += 1
+                request.arrival_time = current_time + timedelta(seconds=random.uniform(0.0, 2.0))
+                print(f"Заявка {request.id} от клиента {client.id} поступила в {format_time(request.arrival_time)} (время использования: {request.service_time.total_seconds():.3f} сек)")
 
-def run_simulation_auto(scheduler, client, duration_seconds):
-    completed_requests = []
-    rejected_requests = []
-    generator_stats = {i: {'generated': 0, 'rejected': 0, 'waiting_times': [], 'system_times': [], 'service_times': []} for i in range(client.num_generators)}
-    workplace_stats = {workplace.id: 0 for workplace in scheduler.workplaces}
+                if buffer.is_empty():
+                    if scheduler.assign_workplace(request, current_time):
+                        print(f"Заявка {request.id} назначена на рабочее место")
+                    else:
+                        scheduler.add_request_to_buffer(request)
+                        print(f"Заявка {request.id} добавлена в буфер")
+                else:
+                    removed_request = scheduler.add_request_to_buffer(request)
+                    if removed_request:
+                        print(f"Буфер переполнен. Заявка {removed_request.id} вытеснена из буфера.")
+                    print(f"Заявка {request.id} добавлена в буфер")
 
-    start_time = datetime.now()
-    current_time = start_time
+        for workplace in workplaces:
+            if workplace.is_busy and workplace.current_request is not None:
+                request = workplace.current_request
+                if current_time >= request.start_time + request.service_time:
+                    workplace.end_service(current_time)
+                    print(f"Рабочее место {workplace.id} завершило обработку заявки {request.id}")
 
-    while (datetime.now() - start_time).seconds < duration_seconds:
-        created_requests = run_simulation_step(scheduler, client, completed_requests, rejected_requests, current_time)
+        if not buffer.is_empty():
+            for workplace in workplaces:
+                if not workplace.is_busy:
+                    next_request = scheduler.get_next_request()
+                    if next_request:
+                        workplace.start_service(next_request, current_time)
+                        print(f"Заявка {next_request.id} извлечена из буфера и назначена на рабочее место {workplace.id}")
 
-        # Обновление статистики
-        for request in completed_requests:
-            generator_id = request.client
-            generator_stats[generator_id]['generated'] += 1
-            if request.status == "отклонена":
-                generator_stats[generator_id]['rejected'] += 1
-            elif request.status == "завершен" and request.start_time and request.end_time:
-                waiting_time = max(0, (request.start_time - request.arrival_time).total_seconds())
-                system_time = max(0, (request.end_time - request.arrival_time).total_seconds())
-                service_time = max(0, (request.end_time - request.start_time).total_seconds())
-                generator_stats[generator_id]['waiting_times'].append(waiting_time)
-                generator_stats[generator_id]['system_times'].append(system_time)
-                generator_stats[generator_id]['service_times'].append(service_time)
-
-        # Учёт занятости рабочих мест
-        for workplace in scheduler.workplaces:
+        print("\nСостояние системы:")
+        print(f"Буфер: {[req.id for req in buffer.requests]}")
+        print("Рабочие места:")
+        for workplace in workplaces:
             if workplace.is_busy:
-                workplace_stats[workplace.id] += 1
+                print(f"Рабочее место {workplace.id}: Занят (Заявка {workplace.current_request.id})")
+            else:
+                print(f"Рабочее место {workplace.id}: Свободен")
 
         current_time += timedelta(seconds=1)
 
-    # Рассчёт средней статистики
-    for stats in generator_stats.values():
-        stats['rejection_percentage'] = (stats['rejected'] / stats['generated']) * 100 if stats['generated'] > 0 else 0
-        stats['avg_waiting_time'] = sum(stats['waiting_times']) / len(stats['waiting_times']) if stats['waiting_times'] else 0
-        stats['avg_system_time'] = sum(stats['system_times']) / len(stats['system_times']) if stats['system_times'] else 0
-        stats['avg_service_time'] = sum(stats['service_times']) / len(stats['service_times']) if stats['service_times'] else 0
 
-    return completed_requests, rejected_requests, generator_stats, workplace_stats
+def print_statistics(total_requests: int, rejected_requests: int, processed_requests: int, total_system_time: timedelta,
+                     workplaces: List[Workplace], simulation_duration: int):
+    """Выводит статистику симуляции."""
+    print("\nСтатистика симуляции:")
+    print(f"Общее количество созданных заявок: {total_requests}")
+    print(f"Количество отклоненных заявок: {rejected_requests}")
+    print(f"Общая сумма: {(total_requests - rejected_requests) * 500 - num_workplaces * 20000 - buffer_size * 5000} руб")
+    if total_requests > 0:
+        rejection_percentage = (rejected_requests / total_requests) * 100
+        print(f"Процент отклонения заявок: {rejection_percentage:.2f}%")
+    else:
+        print("Процент отклонения заявок: 0.00%")
 
-def print_statistics(scheduler, client, generator_stats, rejected_requests, completed_requests, workplace_stats):
-    total_requests = len(client.requests)
-    rejected_requests_count = len(rejected_requests)
-    rejection_rate = (rejected_requests_count / total_requests) * 100 if total_requests > 0 else 0
+    if processed_requests > 0:
+        average_system_time = total_system_time.total_seconds() / processed_requests
+        print(f"Среднее время нахождения в системе: {average_system_time:.3f} сек")
+    else:
+        print("Среднее время нахождения в системе: 0.000 сек")
 
-    print(f"Всего сгенерировано заявок: {total_requests}")
-    print(f"Количество отклонённых заявок: {rejected_requests_count}")
-    print(f"Процент отклонения: {rejection_rate:.2f} %")
+    print("\nЗагруженность рабочих мест:")
+    print(f"{'Рабочее место':<15} {'Время занятости (сек)':<20} {'Процент загруженности':<20}")
 
-    print("\nВремя обслуживания рабочего места:")
-    for workplace_id, time_busy in workplace_stats.items():
-        print(f"Рабочее место {workplace_id}: было занято {time_busy} секунд")
+    total_busy = 0
+    for workplace in workplaces:
+        busy_time_seconds = workplace.total_busy_time.total_seconds()
+        busy_percentage = (busy_time_seconds / simulation_duration) * 100
+        total_busy += busy_percentage
+        print(f"{workplace.id:<15} {busy_time_seconds:<20.2f} {busy_percentage:.2f}%")
+    print(f"Средняя загруженность: {total_busy / len(workplaces):.2f}%")
 
-    print("\nСтатистика по каждому генератору:")
-    for generator_id, stats in generator_stats.items():
-        total_generated = stats['generated']
-        total_rejected = stats['rejected']
-        rejection_rate = (total_rejected / total_generated) * 100 if total_generated > 0 else 0
-        avg_waiting_time = stats['avg_waiting_time']
-        avg_system_time = stats['avg_system_time']
-        avg_service_time = stats['avg_service_time']
 
-        print(f"Генератор {generator_id}:")
-        print(f"  Сгенерировано заявок: {total_generated}")
-        print(f"  Процент отклонённых заявок: {rejection_rate:.2f} %")
-        print(f"  Среднее время ожидания заявки: {avg_waiting_time:.2f} секунд")
-        print(f"  Среднее время в системе: {avg_system_time:.2f} секунд")
-        print(f"  Среднее время обслуживания заявки: {avg_service_time:.2f} секунд")
+def plot_graphs(time_steps: List[float], buffer_sizes: List[int], clients: List[Client], workplaces: List[Workplace],
+                simulation_duration: int):
+    """Строит графики на основе данных симуляции."""
+    plt.figure(figsize=(15, 10))
 
-def main():
-    buffer_size = 10  # Размер буфера
-    num_workplaces = 2  # Количество рабочих мест
-    num_generators = 2  # Количество генераторов заявок
-    scheduler = Scheduler(buffer_size, num_workplaces)
-    client = Client(1, num_generators)
-    rejected_requests = []  # Store rejected requests in main
-    completed_requests = []  # Store completed requests in main
+    plt.subplot(3, 1, 1)
+    plt.plot(time_steps, buffer_sizes, label="Количество заявок в буфере")
+    plt.xlabel("Время (сек)")
+    plt.ylabel("Количество заявок")
+    plt.title("Динамика количества заявок в буфере")
+    plt.legend()
 
-    mode = input("Выберите режим: 'a' для автоматического или 's' для пошагового: ")
+    plt.subplot(3, 1, 2)
+    client_ids = [client.id for client in clients]
+    avg_system_times = [
+        client.total_system_time.total_seconds() / client.processed_requests if client.processed_requests > 0 else 0 for
+        client in clients]
+    plt.plot(client_ids, avg_system_times, label="Среднее время нахождения в системе")
+    plt.xlabel("Номер клиента")
+    plt.ylabel("Среднее время (сек)")
+    plt.title("Среднее время нахождения в системе для каждого клиента")
+    plt.xticks(client_ids)
+    plt.legend()
 
-    if mode == 's':
-        for step in range(1, 11):
-            created_requests = run_simulation_step(scheduler, client, completed_requests, rejected_requests, datetime.now())
-            state_info = get_model_state(scheduler, completed_requests, step, created_requests)
-            print(state_info)
-            input("Нажмите Enter для следующего шага...")
-            time.sleep(0.1)  # Добавляем небольшую задержку
-    elif mode == 'a':
-        duration = int(input("Введите продолжительность симуляции (в секундах): "))
-        completed_requests, rejected_requests, generator_stats, workplace_stats = run_simulation_auto(scheduler, client, duration)
-        print_statistics(scheduler, client, generator_stats, rejected_requests, completed_requests, workplace_stats)
+    plt.subplot(3, 1, 3)
+    workplace_ids = [workplace.id for workplace in workplaces]
+    busy_percentages = [(workplace.total_busy_time.total_seconds() / simulation_duration) * 100 for workplace in
+                        workplaces]
+    plt.plot(workplace_ids, busy_percentages, label="Загруженность рабочих мест", color="orange")
+    plt.xlabel("Номер рабочего места")
+    plt.ylabel("Загруженность (%)")
+    plt.title("Загруженность рабочих мест")
+    plt.ylim(0, 100)
+    plt.xticks(workplace_ids)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def simulate_automatic(num_workplaces: int, buffer_size: int, simulation_duration: int, num_clients: int):
+    buffer = Buffer(buffer_size)
+    workplaces = [Workplace(id=i) for i in range(1, num_workplaces + 1)]
+    scheduler = Scheduler(buffer, workplaces)
+    clients = [Client(id=i) for i in range(1, num_clients + 1)]
+
+    request_counter = 1
+    current_time = datetime.now()
+    end_time = current_time + timedelta(seconds=simulation_duration)
+
+    total_requests = 0
+    rejected_requests = 0
+    total_system_time = timedelta()
+    processed_requests = 0
+
+    time_steps = []
+    buffer_sizes = []
+
+    while current_time < end_time:
+        time_steps.append((current_time - datetime.now()).total_seconds())
+        buffer_sizes.append(len(buffer.requests))
+
+        for client in clients:
+            if random.random() < 0.9:
+                request = client.generate_request(request_counter)
+                request_counter += 1
+                total_requests += 1
+                request.arrival_time = current_time + timedelta(seconds=random.uniform(0.0, 2.0))
+
+                if buffer.is_empty():
+                    if scheduler.assign_workplace(request, current_time):
+                        processed_requests += 1
+                        request.start_time = request.arrival_time
+                    else:
+                        rejected_request = scheduler.add_request_to_buffer(request)
+                        if rejected_request:
+                            rejected_requests += 1
+                else:
+                    rejected_request = scheduler.add_request_to_buffer(request)
+                    if rejected_request:
+                        rejected_requests += 1
+
+        for workplace in workplaces:
+            if workplace.is_busy and workplace.current_request is not None:
+                request = workplace.current_request
+                if current_time >= request.start_time + request.service_time:
+                    workplace.end_service(current_time)
+                    processed_requests += 1
+                    system_time = request.end_time - request.arrival_time
+                    total_system_time += system_time
+
+        if not buffer.is_empty():
+            for workplace in workplaces:
+                if not workplace.is_busy:
+                    next_request = scheduler.get_next_request()
+                    if next_request:
+                        workplace.start_service(next_request, current_time)
+                        next_request.start_time = current_time
+
+        current_time += timedelta(seconds=1)
+
+    print_statistics(total_requests, rejected_requests, processed_requests, total_system_time, workplaces,
+                     simulation_duration)
+    plot_graphs(time_steps, buffer_sizes, clients, workplaces, simulation_duration)
+
 
 if __name__ == "__main__":
-    main()
+    num_workplaces = 3
+    num_clients = 5
+    buffer_size = 5
+    simulation_steps = 10
+    simulation_duration = 300
+
+    print("Выберите режим работы:")
+    print("1. Пошаговый режим")
+    print("2. Автоматический режим")
+    mode = input("Введите номер режима: ")
+
+    if mode == "1":
+        simulate_step_by_step(num_workplaces, buffer_size, simulation_steps, num_clients)
+    elif mode == "2":
+        simulate_automatic(num_workplaces, buffer_size, simulation_duration, num_clients)
+    else:
+        print("Неверный выбор режима.")
