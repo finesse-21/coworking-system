@@ -36,7 +36,9 @@ def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_step
                     if scheduler.assign_workplace(request, current_time):
                         print(f"Заявка {request.id} назначена на рабочее место")
                     else:
-                        scheduler.add_request_to_buffer(request)
+                        removed_request = scheduler.add_request_to_buffer(request)
+                        if removed_request:
+                            print(f"Буфер переполнен. Заявка {removed_request.id} вытеснена из буфера.")
                         print(f"Заявка {request.id} добавлена в буфер")
                 else:
                     removed_request = scheduler.add_request_to_buffer(request)
@@ -60,7 +62,7 @@ def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_step
                         print(f"Заявка {next_request.id} извлечена из буфера и назначена на рабочее место {workplace.id}")
 
         print("\nСостояние системы:")
-        print(f"Буфер: {[req.id for req in buffer.requests]}")
+        print(f"Буфер: {[req.id for req in buffer.requests if req is not None]}")
         print("Рабочие места:")
         for workplace in workplaces:
             if workplace.is_busy:
