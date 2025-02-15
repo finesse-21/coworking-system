@@ -30,7 +30,8 @@ def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_step
                 request = client.generate_request(request_counter)
                 request_counter += 1
                 request.arrival_time = current_time + timedelta(seconds=random.uniform(0.0, 2.0))
-                print(f"Заявка {request.id} от клиента {client.id} поступила в {format_time(request.arrival_time)} (время использования: {request.service_time.total_seconds():.3f} сек)")
+                print(f"Заявка {request.id} от клиента {client.id} поступила в {format_time(request.arrival_time)}"
+                      f" (время использования: {request.service_time.total_seconds():.3f} сек)")
 
                 if buffer.is_empty():
                     if scheduler.assign_workplace(request, current_time):
@@ -73,24 +74,17 @@ def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_step
         current_time += timedelta(seconds=1)
 
 
-def print_statistics(total_requests: int, rejected_requests: int, processed_requests: int, total_system_time: timedelta,
-                     workplaces: List[Workplace], simulation_duration: int):
+def print_statistics(total_requests: int, workplaces: List[Workplace], simulation_duration: int, rejected_requests: int,
+                     rejection_percentage: float, average_system_time: float):
     """Выводит статистику симуляции."""
     print("\nСтатистика симуляции:")
     print(f"Общее количество созданных заявок: {total_requests}")
     print(f"Количество отклоненных заявок: {rejected_requests}")
-    print(f"Общая сумма: {(total_requests - rejected_requests) * 500 - num_workplaces * 20000 - buffer_size * 5000} руб")
-    if total_requests > 0:
-        rejection_percentage = (rejected_requests / total_requests) * 100
-        print(f"Процент отклонения заявок: {rejection_percentage:.2f}%")
-    else:
-        print("Процент отклонения заявок: 0.00%")
+    print(
+        f"Общая сумма: {(total_requests - rejected_requests) * 500 - num_workplaces * 20000 - buffer_size * 5000} руб")
 
-    if processed_requests > 0:
-        average_system_time = total_system_time.total_seconds() / processed_requests
-        print(f"Среднее время нахождения в системе: {average_system_time:.3f} сек")
-    else:
-        print("Среднее время нахождения в системе: 0.000 сек")
+    print(f"Процент отклонения заявок: {rejection_percentage:.2f}%")
+    print(f"Среднее время нахождения в системе: {average_system_time:.3f} сек")
 
     print("\nЗагруженность рабочих мест:")
     print(f"{'Рабочее место':<15} {'Время занятости (сек)':<20} {'Процент загруженности':<20}")
@@ -102,7 +96,6 @@ def print_statistics(total_requests: int, rejected_requests: int, processed_requ
         total_busy += busy_percentage
         print(f"{workplace.id:<15} {busy_time_seconds:<20.2f} {busy_percentage:.2f}%")
     print(f"Средняя загруженность: {total_busy / len(workplaces):.2f}%")
-
 
 def plot_graphs(time_steps: List[float], buffer_sizes: List[int], clients: List[Client], workplaces: List[Workplace],
                 simulation_duration: int):
@@ -144,6 +137,37 @@ def plot_graphs(time_steps: List[float], buffer_sizes: List[int], clients: List[
     plt.show()
 
 
+def print_client_statistics(clients: List[Client]):
+    """Выводит таблицу с подробной статистикой по каждому клиенту и возвращает агрегированные данные."""
+    print("\nСтатистика по клиентам:")
+    print(
+        f"{'ID клиента':<10} {'Заявок создано':<15} {'Заявок обработано':<15} {'Заявок отклонено':<15}"
+        f" {'% отклонения':<15} {'Среднее время (сек)':<20} {'Общее время (сек)':<20}")
+
+    total_generated = 0
+    total_processed = 0
+    total_rejected = 0
+    total_system_time = timedelta()
+
+    for client in clients:
+        generated_requests = client.generated_requests
+        processed_requests = client.processed_requests
+        rejected_requests = generated_requests - processed_requests
+        rejection_percentage = (rejected_requests / generated_requests * 100) if generated_requests > 0 else 0
+
+        print(
+            f"    {client.id:<10} {generated_requests:<15} {processed_requests:<15} {rejected_requests:<15}"
+            f"    {rejection_percentage:<15.2f} {client.average_system_time():<20.2f}  {client.total_system_time.total_seconds():<20.2f}")
+
+        total_generated += generated_requests
+        total_processed += processed_requests
+        total_rejected += rejected_requests
+        total_system_time += client.total_system_time
+
+    overall_rejection_percentage = (total_rejected / total_generated * 100) if total_generated > 0 else 0
+    overall_average_system_time = (total_system_time.total_seconds() / total_processed) if total_processed > 0 else 0
+    return total_rejected, overall_rejection_percentage, overall_average_system_time
+
 def simulate_automatic(num_workplaces: int, buffer_size: int, simulation_duration: int, num_clients: int):
     buffer = Buffer(buffer_size)
     workplaces = [Workplace(id=i) for i in range(1, num_workplaces + 1)]
@@ -181,10 +205,12 @@ def simulate_automatic(num_workplaces: int, buffer_size: int, simulation_duratio
                         rejected_request = scheduler.add_request_to_buffer(request)
                         if rejected_request:
                             rejected_requests += 1
+                            rejected_request.client.processed_requests -= 1
                 else:
                     rejected_request = scheduler.add_request_to_buffer(request)
                     if rejected_request:
                         rejected_requests += 1
+                        rejected_request.client.processed_requests -= 1
 
         for workplace in workplaces:
             if workplace.is_busy and workplace.current_request is not None:
@@ -205,15 +231,15 @@ def simulate_automatic(num_workplaces: int, buffer_size: int, simulation_duratio
 
         current_time += timedelta(seconds=1)
 
-    print_statistics(total_requests, rejected_requests, processed_requests, total_system_time, workplaces,
-                     simulation_duration)
+    total_rejected, rejection_percentage, average_system_time = print_client_statistics(clients)
+    print_statistics(total_requests, workplaces, simulation_duration, total_rejected, rejection_percentage, average_system_time)
     plot_graphs(time_steps, buffer_sizes, clients, workplaces, simulation_duration)
 
 
 if __name__ == "__main__":
-    num_workplaces = 3
-    num_clients = 5
-    buffer_size = 5
+    num_workplaces = 25
+    num_clients = 10
+    buffer_size = 10
     simulation_steps = 10
     simulation_duration = 300
 
