@@ -6,6 +6,7 @@ from models.buffer import Buffer
 from models.client import Client
 from models.scheduler import Scheduler
 from models.workplace import Workplace
+import numpy as np
 
 def format_time(time: datetime) -> str:
     """Форматирует время в формат ЧЧ:ММ:СС.ммм."""
@@ -30,8 +31,9 @@ def simulate_step_by_step(num_workplaces: int, buffer_size: int, simulation_step
                 request = client.generate_request(request_counter)
                 request_counter += 1
                 request.arrival_time = current_time + timedelta(seconds=random.uniform(0.0, 2.0))
-                print(f"Заявка {request.id} от клиента {client.id} поступила в {format_time(request.arrival_time)}"
-                      f" (время использования: {request.service_time.total_seconds():.3f} сек)")
+                print(
+                    f"Заявка {request.id} от клиента {client.id} поступила в {format_time(request.arrival_time)}"
+                    f" (время использования: {request.service_time.total_seconds():.3f} сек)")
 
                 if buffer.is_empty():
                     if scheduler.assign_workplace(request, current_time):
@@ -80,9 +82,6 @@ def print_statistics(total_requests: int, workplaces: List[Workplace], simulatio
     print("\nСтатистика симуляции:")
     print(f"Общее количество созданных заявок: {total_requests}")
     print(f"Количество отклоненных заявок: {rejected_requests}")
-    print(
-        f"Общая сумма: {(total_requests - rejected_requests) * 500 - num_workplaces * 20000 - buffer_size * 5000} руб")
-
     print(f"Процент отклонения заявок: {rejection_percentage:.2f}%")
     print(f"Среднее время нахождения в системе: {average_system_time:.3f} сек")
 
@@ -94,7 +93,7 @@ def print_statistics(total_requests: int, workplaces: List[Workplace], simulatio
         busy_time_seconds = workplace.total_busy_time.total_seconds()
         busy_percentage = (busy_time_seconds / simulation_duration) * 100
         total_busy += busy_percentage
-        print(f"{workplace.id:<15} {busy_time_seconds:<20.2f} {busy_percentage:.2f}%")
+        print(f"     {workplace.id:<15} {busy_time_seconds:<20.2f} {busy_percentage:.2f}%")
     print(f"Средняя загруженность: {total_busy / len(workplaces):.2f}%")
 
 def plot_graphs(time_steps: List[float], buffer_sizes: List[int], clients: List[Client], workplaces: List[Workplace],
@@ -138,16 +137,20 @@ def plot_graphs(time_steps: List[float], buffer_sizes: List[int], clients: List[
 
 
 def print_client_statistics(clients: List[Client]):
-    """Выводит таблицу с подробной статистикой по каждому клиенту и возвращает агрегированные данные."""
+    """Выводит таблицу с подробной статистикой по каждому клиенту."""
     print("\nСтатистика по клиентам:")
     print(
-        f"{'ID клиента':<10} {'Заявок создано':<15} {'Заявок обработано':<15} {'Заявок отклонено':<15}"
-        f" {'% отклонения':<15} {'Среднее время (сек)':<20} {'Общее время (сек)':<20}")
+        f"| {'ID клиента':^12} | {'Заявок создано':^15} | {'Заявок обработано':^15} | {'Заявок отклонено':^18} "
+        f"| {'% отклонения':^15} | {'Ср. T в системе (сек)':^25} | {'Ср. T обсл. (сек)':^18} "
+        f"| {'Дисперсия T обсл.':^18} | {'Дисперсия T в системе':^20} |"
+    )
+    print("-" * 187)
 
     total_generated = 0
     total_processed = 0
     total_rejected = 0
     total_system_time = timedelta()
+    system_times = []
 
     for client in clients:
         generated_requests = client.generated_requests
@@ -155,14 +158,27 @@ def print_client_statistics(clients: List[Client]):
         rejected_requests = generated_requests - processed_requests
         rejection_percentage = (rejected_requests / generated_requests * 100) if generated_requests > 0 else 0
 
+        avg_system_time = client.average_system_time()
+        avg_service_time = client.average_service_time()
+        service_time_variance = client.service_time_variance()
+
+        system_times_client = [
+            (req.end_time - req.arrival_time).total_seconds() for req in client.requests if req.end_time is not None
+        ]
+        system_time_variance = np.var(system_times_client) if len(system_times_client) > 1 else 0
+
         print(
-            f"    {client.id:<10} {generated_requests:<15} {processed_requests:<15} {rejected_requests:<15}"
-            f"    {rejection_percentage:<15.2f} {client.average_system_time():<20.2f}  {client.total_system_time.total_seconds():<20.2f}")
+            f"| {client.id:^12} | {generated_requests:^15} | {processed_requests:^17} | {rejected_requests:^18} "
+            f"| {rejection_percentage:^15.2f} | {avg_system_time:^25.2f} | {avg_service_time:^18.2f} "
+            f"| {service_time_variance:^18.2f} | {system_time_variance:^21.2f} |"
+        )
+        print("-" * 187)
 
         total_generated += generated_requests
         total_processed += processed_requests
         total_rejected += rejected_requests
         total_system_time += client.total_system_time
+        system_times.extend(system_times_client)
 
     overall_rejection_percentage = (total_rejected / total_generated * 100) if total_generated > 0 else 0
     overall_average_system_time = (total_system_time.total_seconds() / total_processed) if total_processed > 0 else 0
@@ -232,14 +248,15 @@ def simulate_automatic(num_workplaces: int, buffer_size: int, simulation_duratio
         current_time += timedelta(seconds=1)
 
     total_rejected, rejection_percentage, average_system_time = print_client_statistics(clients)
-    print_statistics(total_requests, workplaces, simulation_duration, total_rejected, rejection_percentage, average_system_time)
-    plot_graphs(time_steps, buffer_sizes, clients, workplaces, simulation_duration)
+    print_statistics(total_requests, workplaces, simulation_duration, total_rejected, rejection_percentage,
+                     average_system_time)
+    # plot_graphs(time_steps, buffer_sizes, clients, workplaces, simulation_duration)
 
 
 if __name__ == "__main__":
-    num_workplaces = 25
-    num_clients = 10
-    buffer_size = 10
+    num_workplaces = 11
+    num_clients = 5
+    buffer_size = 15
     simulation_steps = 10
     simulation_duration = 300
 

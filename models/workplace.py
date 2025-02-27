@@ -24,5 +24,6 @@ class Workplace:
             self.is_busy = False
             self.total_busy_time += current_time - self.last_busy_start_time
             request.client.add_system_time(request.end_time - request.arrival_time)
+            request.client.add_service_time(request.service_time)
             self.current_request = None
             self.last_busy_start_time = None
